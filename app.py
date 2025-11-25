@@ -2,6 +2,26 @@ from flask import Flask, render_template, request, session, Response, jsonify
 from google import genai
 from google.genai import types
 import mimetypes
+import json, random
+
+FEWSHOT_PATH = "jjchat_train_200.jsonl"
+FEWSHOT_K = 3
+
+def load_fewshots():
+    with open(FEWSHOT_PATH, "r", encoding="utf-8") as f:
+        data = [json.loads(line) for line in f]
+    return data
+
+FEWSHOTS = load_fewshots()
+
+def sample_fewshots(k=FEWSHOT_K):
+    picks = random.sample(FEWSHOTS, k)
+    pairs = []
+    for p in picks:
+        u = p["messages"][0]["content"]
+        a = p["messages"][1]["content"]
+        pairs.append((u, a))
+    return pairs
 
 app = Flask(__name__)
 app.secret_key = "jjchat-secret-key"
@@ -90,6 +110,10 @@ def chat_stream():
 
     history = get_history()
     contents = history_to_contents(history)
+    # add few-shot examples before current user message
+    for u, a in sample_fewshots():
+        contents.append(types.Content(role="user", parts=[types.Part(text=u)]))
+        contents.append(types.Content(role="model", parts=[types.Part(text=a)]))
 
     parts = []
     if user_msg:
