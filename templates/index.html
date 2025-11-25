@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>JJChat</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+
+  <style>
+    :root{
+      --bg: #f7f8fb;
+      --panel: #ffffff;
+      --ink: #0f172a;
+      --muted:#64748b;
+      --accent:#2563eb;
+      --border:#e2e8f0;
+      --bubble:#f1f5f9;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      background:var(--bg); color:var(--ink);
+    }
+    .app{
+      height:100vh; display:grid; grid-template-columns: 280px 1fr;
+    }
+    .sidebar{
+      background:var(--panel); border-right:1px solid var(--border);
+      display:flex; flex-direction:column;
+    }
+    .brand{
+      padding:16px; font-weight:800; font-size:20px;
+      border-bottom:1px solid var(--border);
+      display:flex; align-items:center; gap:8px;
+    }
+    .brand .dot{
+      width:10px;height:10px;border-radius:50%;background:var(--accent);
+    }
+    .side-actions{
+      padding:12px; display:flex; gap:8px;
+      border-bottom:1px solid var(--border);
+    }
+    .btn{
+      border:1px solid var(--border); background:#fff;
+      padding:8px 10px; border-radius:10px; cursor:pointer;
+      font-weight:600; color:var(--ink);
+    }
+    .btn.primary{ background:var(--accent); color:white; border-color:transparent; }
+    .btn.ghost{ background:#fff; color:var(--muted); }
+    .chat-list{
+      padding:8px; overflow:auto; flex:1; display:flex; flex-direction:column; gap:6px;
+    }
+    .chat-item{
+      padding:10px 12px; border-radius:10px; cursor:pointer;
+      color:var(--ink); background:#fff; border:1px solid transparent;
+    }
+    .chat-item.active{
+      background:#eef2ff; border-color:#c7d2fe;
+    }
+    .chat-item .title{ font-weight:700; font-size:14px; }
+    .chat-item .meta{ font-size:12px; color:var(--muted); margin-top:2px; }
+    .main{
+      display:flex; flex-direction:column; height:100vh;
+    }
+    .topbar{
+      padding:14px 18px; background:var(--panel); border-bottom:1px solid var(--border);
+      font-weight:700;
+    }
+    #chat{
+      flex:1; overflow:auto; padding:18px; display:flex; flex-direction:column; gap:12px;
+    }
+    .msg{
+      max-width:78%; padding:10px 12px; border-radius:14px; line-height:1.55;
+      border:1px solid var(--border); background:var(--bubble); white-space:pre-wrap;
+      box-shadow:0 1px 0 rgba(0,0,0,.02);
+    }
+    .msg.user{
+      align-self:flex-end; background:#e8f0ff; border-color:#cfe0ff;
+    }
+    .msg.bot{
+      align-self:flex-start; background:#fff;
+    }
+    .img-preview{
+      margin-top:6px; border-radius:10px; max-width:220px; border:1px solid var(--border);
+    }
+    .composer{
+      background:var(--panel); border-top:1px solid var(--border);
+      padding:12px; display:flex; gap:8px; align-items:flex-end;
+    }
+    textarea{
+      flex:1; resize:none; min-height:44px; max-height:160px;
+      padding:10px 12px; border-radius:12px; border:1px solid var(--border);
+      font-size:15px; outline:none;
+    }
+    .icon-btn{
+      width:42px;height:42px;border-radius:12px;border:1px dashed var(--border);
+      display:grid;place-items:center;background:#fff;cursor:pointer;font-weight:800;color:var(--muted);
+    }
+    .send{
+      height:42px;padding:0 14px;border-radius:12px;border:none;background:var(--accent);
+      color:white;font-weight:800;cursor:pointer;
+    }
+    .hint{ font-size:12px; color:var(--muted); margin:6px 0 0 6px; }
+  </style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><span class="dot"></span>JJChat</div>
+    <div class="side-actions">
+      <button class="btn primary" id="newChat">New chat</button>
+      <button class="btn ghost" id="clearAll">Clear all</button>
+    </div>
+    <div class="chat-list" id="chatList"></div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar" id="chatTitle">New chat</div>
+    <div id="chat"></div>
+
+    <div class="composer">
+      <label class="icon-btn" title="Upload image">
+        +
+        <input id="imageInput" type="file" accept="image/*" style="display:none"/>
+      </label>
+      <textarea id="inp" placeholder="Message JJChat... (Enter to send, Shift+Enter newline)"></textarea>
+      <button class="send" id="send">Send</button>
+    </div>
+    <div class="hint" id="imgHint"></div>
+  </main>
+</div>
+
+<script>
+const LS_KEY = "jjchat_conversations_v1";
+let conversations = JSON.parse(localStorage.getItem(LS_KEY) || "[]");
+let currentId = null;
+
+function saveLS(){ localStorage.setItem(LS_KEY, JSON.stringify(conversations)); }
+function getCurrent(){ return conversations.find(c => c.id === currentId); }
+
+function newConversation(){
+  const id = crypto.randomUUID();
+  const convo = { id, title:"New chat", createdAt:Date.now(), messages:[] };
+  conversations.unshift(convo); currentId = id; saveLS();
+  renderSidebar(); renderChat(); syncServerHistory();
+}
+
+function setActive(id){
+  currentId = id; renderSidebar(); renderChat(); syncServerHistory();
+}
+
+function clearAll(){
+  conversations=[]; currentId=null; saveLS(); renderSidebar(); renderChat();
+  fetch("/reset",{method:"POST"});
+}
+
+function renderSidebar(){
+  const list=document.getElementById("chatList"); list.innerHTML="";
+  conversations.forEach(c=>{
+    const div=document.createElement("div");
+    div.className="chat-item"+(c.id===currentId?" active":"");
+    div.innerHTML=`<div class="title">${c.title||"Chat"}</div>
+                   <div class="meta">${new Date(c.createdAt).toLocaleString()}</div>`;
+    div.onclick=()=>setActive(c.id); list.appendChild(div);
+  });
+}
+
+function addMsg(text, role, imageDataUrl=null){
+  const chat=document.getElementById("chat");
+  const div=document.createElement("div");
+  div.className="msg "+(role==="user"?"user":"bot");
+  div.textContent=text||"";
+  if(imageDataUrl){
+    const img=document.createElement("img");
+    img.src=imageDataUrl; img.className="img-preview";
+    div.appendChild(document.createElement("br")); div.appendChild(img);
+  }
+  chat.appendChild(div); chat.scrollTop=chat.scrollHeight; return div;
+}
+
+function renderChat(){
+  const chat=document.getElementById("chat"); chat.innerHTML="";
+  const convo=getCurrent();
+  document.getElementById("chatTitle").textContent=convo?convo.title:"New chat";
+  if(!convo) return;
+  convo.messages.forEach(m=>addMsg(m.text,m.role,m.imageDataUrl));
+}
+
+async function syncServerHistory(){
+  const convo=getCurrent(); if(!convo) return;
+  const history=convo.messages.map(m=>({
+    role:m.role==="user"?"user":"model", text:m.text
+  }));
+  await fetch("/sync",{method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({history})
+  });
+}
+
+const inp=document.getElementById("inp");
+const sendBtn=document.getElementById("send");
+const imageInput=document.getElementById("imageInput");
+const imgHint=document.getElementById("imgHint");
+
+let pendingImage=null, pendingImageDataUrl=null;
+
+imageInput.onchange=(e)=>{
+  const file=e.target.files[0];
+  if(!file){ pendingImage=null; pendingImageDataUrl=null; imgHint.textContent=""; return; }
+  pendingImage=file; imgHint.textContent="Image attached: "+file.name;
+  const reader=new FileReader();
+  reader.onload=()=>pendingImageDataUrl=reader.result;
+  reader.readAsDataURL(file);
+};
+
+async function send(){
+  const text=inp.value.trim();
+  if(!text && !pendingImage) return;
+  if(!currentId) newConversation();
+  const convo=getCurrent();
+
+  addMsg(text||"[Image]","user",pendingImageDataUrl);
+  convo.messages.push({role:"user",text:text||"[Image]",imageDataUrl:pendingImageDataUrl});
+  if(convo.title==="New chat" && text) convo.title=text.slice(0,24);
+  saveLS(); renderSidebar(); inp.value="";
+
+  const botDiv=addMsg("","bot");
+  convo.messages.push({role:"bot",text:""}); saveLS();
+
+  const fd=new FormData(); fd.append("message",text);
+  if(pendingImage) fd.append("image",pendingImage);
+
+  pendingImage=null; pendingImageDataUrl=null; imageInput.value=""; imgHint.textContent="";
+
+  const res=await fetch("/chat_stream",{method:"POST",body:fd});
+  const reader=res.body.getReader();
+  const decoder=new TextDecoder("utf-8");
+
+  let full="";
+  while(true){
+    const {value,done}=await reader.read();
+    if(done) break;
+    const chunk=decoder.decode(value,{stream:true});
+    full+=chunk; botDiv.textContent=full;
+    chat.scrollTop=chat.scrollHeight;
+  }
+  convo.messages[convo.messages.length-1].text=full; saveLS();
+}
+
+sendBtn.onclick=send;
+inp.addEventListener("keydown",e=>{
+  if(e.key==="Enter" && !e.shiftKey){ e.preventDefault(); send(); }
+});
+
+document.getElementById("newChat").onclick=newConversation;
+document.getElementById("clearAll").onclick=clearAll;
+
+if(conversations.length){
+  currentId=conversations[0].id;
+  renderSidebar(); renderChat(); syncServerHistory();
+}else{ renderSidebar(); }
+</script>
+</body>
+</html>
